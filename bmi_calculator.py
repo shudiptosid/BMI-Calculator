@@ -1,6 +1,9 @@
-﻿import tkinter as tk
-from tkinter import ttk
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog, simpledialog
 import math
+import json
+import os
+import datetime
 
 
 # ─────────────────────────────────────────────
@@ -26,15 +29,61 @@ BMI_COLORS = {
     "obese_3":      "#dc2626",
 }
 
+# Added the unique category key as the 6th element in each range tuple
 BMI_RANGES = [
-    (0,    16.0,  "Severely Underweight",  "Consult a doctor immediately",          BMI_COLORS["severe_under"]),
-    (16.0, 18.5,  "Underweight",           "You need to gain weight",               BMI_COLORS["underweight"]),
-    (18.5, 25.0,  "Normal / Perfect",      "Great! Keep it up",                     BMI_COLORS["normal"]),
-    (25.0, 30.0,  "Overweight",            "Needs improvement – diet & exercise",   BMI_COLORS["overweight"]),
-    (30.0, 35.0,  "Obesity – Class I",     "Moderate obesity, seek guidance",       BMI_COLORS["obese_1"]),
-    (35.0, 40.0,  "Obesity – Class II",    "Severe obesity, consult a specialist",  BMI_COLORS["obese_2"]),
-    (40.0, 100.0, "Obesity – Class III",   "Morbid obesity, medical care needed",   BMI_COLORS["obese_3"]),
+    (0,    16.0,  "Severely Underweight",  "Consult a doctor immediately",          BMI_COLORS["severe_under"], "severe_under"),
+    (16.0, 18.5,  "Underweight",           "You need to gain weight",               BMI_COLORS["underweight"],  "underweight"),
+    (18.5, 25.0,  "Normal / Perfect",      "Great! Keep it up",                     BMI_COLORS["normal"],       "normal"),
+    (25.0, 30.0,  "Overweight",            "Needs improvement – diet & exercise",   BMI_COLORS["overweight"],   "overweight"),
+    (30.0, 35.0,  "Obesity – Class I",     "Moderate obesity, seek guidance",       BMI_COLORS["obese_1"],      "obese_1"),
+    (35.0, 40.0,  "Obesity – Class II",    "Severe obesity, consult a specialist",  BMI_COLORS["obese_2"],      "obese_2"),
+    (40.0, 100.0, "Obesity – Class III",   "Morbid obesity, medical care needed",   BMI_COLORS["obese_3"],      "obese_3"),
 ]
+
+# Detailed health & wellness tips matching each category key
+HEALTH_TIPS = {
+    "severe_under": (
+        "✔ Consult a doctor or registered dietitian immediately.\n"
+        "✔ Focus on regular, small, nutrient-dense, high-calorie meals.\n"
+        "✔ Avoid filling up on beverages before eating."
+    ),
+    "underweight": (
+        "✔ Gradually increase calorie intake with wholesome food groups.\n"
+        "✔ Incorporate healthy fats (nuts, seeds, avocados, olive oil).\n"
+        "✔ Perform resistance training to build healthy muscle mass."
+    ),
+    "normal": (
+        "✔ Maintain your current healthy lifestyle.\n"
+        "✔ Eat a colorful, balanced diet with fiber, protein, and grains.\n"
+        "✔ Keep up daily physical activity and prioritize quality sleep."
+    ),
+    "overweight": (
+        "Try:\n"
+        "✔ Walking daily, cycling, or doing recreational sports.\n"
+        "✔ Portions management and limiting high-sugar processed foods.\n"
+        "✔ Increasing fresh vegetables, lean proteins, and water intake."
+    ),
+    "obese_1": (
+        "Try:\n"
+        "✔ Starting light aerobic exercise (walking, swimming) 30 mins a day.\n"
+        "✔ Structured meal planning and logging meals to monitor calories.\n"
+        "✔ Partnering with a nutritionist or coach for supportive check-ins."
+    ),
+    "obese_2": (
+        "Try:\n"
+        "✔ Low-impact joint-friendly physical exercises.\n"
+        "✔ Structured, dietitian-approved calorie-controlled meal plans.\n"
+        "✔ Routine wellness checkups and tracking step count."
+    ),
+    "obese_3": (
+        "Try:\n"
+        "✔ Supervising physical activities under medical advice.\n"
+        "✔ Setting up a medical evaluation for weight management plan.\n"
+        "✔ Gaining routine behavioral and mental health counseling support."
+    )
+}
+
+HISTORY_FILE = "bmi_history.json"
 
 
 # ─────────────────────────────────────────────
@@ -61,11 +110,11 @@ def weight_to_kg(value, unit):
 
 
 def get_bmi_category(bmi):
-    for lo, hi, label, tip, color in BMI_RANGES:
+    for lo, hi, label, tip, color, key in BMI_RANGES:
         if lo <= bmi < hi:
-            return label, tip, color
+            return label, tip, color, key
     last = BMI_RANGES[-1]
-    return last[2], last[3], last[4]
+    return last[2], last[3], last[4], last[5]
 
 
 # ─────────────────────────────────────────────
@@ -204,10 +253,22 @@ class BMIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("BMI Calculator")
-        self.resizable(False, False)
+        
+        # Enable Resizing and set Constraints
+        self.resizable(True, True)
+        self.minsize(820, 720)
         self.configure(bg=BG)
-        self._center_window(820, 660)
+        self._center_window(850, 740)
+
+        # Store calculated results for clipboard & report export
+        self.last_bmi = None
+        self.last_category = None
+        self.last_height_str = ""
+        self.last_weight_str = ""
+        self.last_tips_key = ""
+
         self._build_ui()
+        self._refresh_history_table()
 
     def _center_window(self, w, h):
         sw = self.winfo_screenwidth()
@@ -217,9 +278,46 @@ class BMIApp(tk.Tk):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build_ui(self):
-        # Header
-        hdr = tk.Frame(self, bg=BG)
-        hdr.pack(fill="x", padx=30, pady=(28, 0))
+        # Configure global window resizing grid weights
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        # Styled notebook tabs
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background=CARD, foreground=TEXT_SEC, 
+                        bordercolor=BORDER, padding=[18, 8], font=("Segoe UI", 10, "bold"))
+        style.map("TNotebook.Tab",
+                  background=[("selected", ACCENT)],
+                  foreground=[("selected", "white")])
+
+        # Treeview history log styles
+        style.configure("Treeview",
+                        background=CARD,
+                        foreground=TEXT_PRI,
+                        fieldbackground=CARD,
+                        rowheight=30,
+                        bordercolor=BORDER,
+                        borderwidth=0)
+        style.map("Treeview",
+                  background=[("selected", ACCENT)],
+                  foreground=[("selected", "white")])
+        style.configure("Treeview.Heading",
+                        background=INPUT_BG,
+                        foreground=TEXT_SEC,
+                        relief="flat",
+                        font=("Segoe UI", 9, "bold"))
+
+        notebook = ttk.Notebook(self, style="TNotebook")
+        notebook.grid(row=0, column=0, sticky="nsew")
+
+        # ── TAB 1: CALCULATOR ──
+        calc_tab = tk.Frame(notebook, bg=BG)
+        notebook.add(calc_tab, text="  Calculator  ")
+
+        hdr = tk.Frame(calc_tab, bg=BG)
+        hdr.pack(fill="x", padx=30, pady=(20, 0))
         tk.Label(hdr, text="BMI Calculator",
                  bg=BG, fg=TEXT_PRI,
                  font=("Segoe UI", 22, "bold")).pack(side="left")
@@ -227,21 +325,66 @@ class BMIApp(tk.Tk):
                  bg=BG, fg=TEXT_SEC,
                  font=("Segoe UI", 11)).pack(side="left", padx=(12, 0), pady=(6, 0))
 
-        tk.Frame(self, bg=BORDER, height=1).pack(fill="x", padx=30, pady=(14, 0))
+        tk.Frame(calc_tab, bg=BORDER, height=1).pack(fill="x", padx=30, pady=(12, 0))
 
-        # Body
-        body = tk.Frame(self, bg=BG)
-        body.pack(fill="both", expand=True, padx=30, pady=20)
+        body = tk.Frame(calc_tab, bg=BG)
+        body.pack(fill="both", expand=True, padx=30, pady=15)
         body.columnconfigure(0, weight=1)
         body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
 
         self._build_left(body)
         self._build_right(body)
 
-        # Footer
-        tk.Label(self, text="BMI is a general screening tool and not a diagnostic measure.",
+        tk.Label(calc_tab, text="BMI is a general screening tool and not a diagnostic measure.",
                  bg=BG, fg=TEXT_SEC,
-                 font=("Segoe UI", 8)).pack(pady=(0, 12))
+                 font=("Segoe UI", 8)).pack(pady=(0, 10))
+
+        # ── TAB 2: HISTORY LOG ──
+        hist_tab = tk.Frame(notebook, bg=BG)
+        notebook.add(hist_tab, text="  Calculation History  ")
+
+        hdr_h = tk.Frame(hist_tab, bg=BG)
+        hdr_h.pack(fill="x", padx=30, pady=(20, 0))
+        tk.Label(hdr_h, text="BMI History Log",
+                 bg=BG, fg=TEXT_PRI,
+                 font=("Segoe UI", 22, "bold")).pack(side="left")
+        tk.Frame(hist_tab, bg=BORDER, height=1).pack(fill="x", padx=30, pady=(12, 0))
+
+        # Table frame inside history log
+        tbl_frame = tk.Frame(hist_tab, bg=BG)
+        tbl_frame.pack(fill="both", expand=True, padx=30, pady=15)
+        tbl_frame.rowconfigure(0, weight=1)
+        tbl_frame.columnconfigure(0, weight=1)
+
+        columns = ("date", "height", "weight", "bmi", "category")
+        self.history_table = ttk.Treeview(tbl_frame, columns=columns, show="headings", style="Treeview")
+        
+        self.history_table.heading("date", text="Date & Time")
+        self.history_table.heading("height", text="Height Input")
+        self.history_table.heading("weight", text="Weight Input")
+        self.history_table.heading("bmi", text="BMI")
+        self.history_table.heading("category", text="Classification")
+
+        self.history_table.column("date", width=150, anchor="center")
+        self.history_table.column("height", width=120, anchor="center")
+        self.history_table.column("weight", width=120, anchor="center")
+        self.history_table.column("bmi", width=90, anchor="center")
+        self.history_table.column("category", width=220, anchor="w")
+
+        vsb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.history_table.yview)
+        self.history_table.configure(yscrollcommand=vsb.set)
+        
+        self.history_table.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        hist_btn_row = tk.Frame(hist_tab, bg=BG)
+        hist_btn_row.pack(fill="x", padx=30, pady=(0, 25))
+        self._btn(hist_btn_row, "  Clear History  ", self._clear_history,
+                  bg=DANGER, fg="white").pack(side="left")
+
+        # Global keyboard Return key binding to calculate BMI instantly
+        self.bind("<Return>", lambda _: self._calculate())
 
     def _build_left(self, parent):
         left = tk.Frame(parent, bg=BG)
@@ -263,7 +406,7 @@ class BMIApp(tk.Tk):
         self.w_entry_var = tk.StringVar()
         self.w_entry = self._entry(wcard, "Value", self.w_entry_var, "e.g. 65")
 
-        # Buttons
+        # Calculator Action Buttons (Row 1)
         btn_row = tk.Frame(left, bg=BG)
         btn_row.pack(fill="x", pady=(18, 0))
         self._btn(btn_row, "  Calculate BMI  ", self._calculate,
@@ -271,17 +414,40 @@ class BMIApp(tk.Tk):
         self._btn(btn_row, "  Reset  ", self._reset,
                   bg=CARD, fg=TEXT_SEC).pack(side="left", fill="x", expand=True, padx=(6, 0))
 
+        # Utility Action Buttons (Row 2)
+        btn_row2 = tk.Frame(left, bg=BG)
+        btn_row2.pack(fill="x", pady=(8, 0))
+        
+        self.copy_btn = self._btn(btn_row2, "  Copy Result  ", self._copy_result, bg=CARD, fg=TEXT_PRI)
+        self.copy_btn.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.copy_btn.config(state="disabled")
+
+        self.pdf_btn = self._btn(btn_row2, "  Export PDF  ", self._export_pdf, bg=CARD, fg=TEXT_PRI)
+        self.pdf_btn.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self.pdf_btn.config(state="disabled")
+
+        # Info & Error Indicators
         self.info_var = tk.StringVar(value="")
         tk.Label(left, textvariable=self.info_var,
                  bg=BG, fg=TEXT_SEC,
                  font=("Segoe UI", 8, "italic"),
-                 justify="left", anchor="w").pack(fill="x", pady=(10, 0))
+                 justify="left", anchor="w").pack(fill="x", pady=(8, 0))
 
         self.err_var = tk.StringVar(value="")
         tk.Label(left, textvariable=self.err_var,
                  bg=BG, fg=DANGER,
                  font=("Segoe UI", 9),
                  justify="left", anchor="w").pack(fill="x")
+
+        # Health Advice Display Card
+        self._section(left, "HEALTH RECOMMENDATIONS")
+        self.tips_card = self._card(left, pady=0)
+        self.tips_text = tk.StringVar(value="Enter details and calculate to see health advice.")
+        self.tips_label = tk.Label(self.tips_card, textvariable=self.tips_text,
+                                   bg=CARD, fg=TEXT_PRI,
+                                   font=("Segoe UI", 9),
+                                   justify="left", anchor="w")
+        self.tips_label.pack(fill="x", padx=14, pady=12)
 
     def _build_right(self, parent):
         right = tk.Frame(parent, bg=BG)
@@ -300,7 +466,7 @@ class BMIApp(tk.Tk):
         rcard = self._card(right, pady=0)
         self.range_rows = []
 
-        for lo, hi, label, tip, color in BMI_RANGES:
+        for lo, hi, label, tip, color, key in BMI_RANGES:
             row_frame = tk.Frame(rcard, bg=CARD)
             row_frame.pack(fill="x", pady=1)
 
@@ -407,27 +573,27 @@ class BMIApp(tk.Tk):
         # height
         h_raw = self.h_entry.get().strip()
         if not h_raw or h_raw == self.h_entry._placeholder:
-            self.err_var.set("  Please enter a height value.")
+            self.err_var.set("Please enter a valid height.")
             return
         try:
             h_num = float(h_raw)
             if h_num <= 0:
                 raise ValueError
         except ValueError:
-            self.err_var.set("  Height must be a positive number.")
+            self.err_var.set("Please enter a valid height.")
             return
 
         # weight
         w_raw = self.w_entry.get().strip()
         if not w_raw or w_raw == self.w_entry._placeholder:
-            self.err_var.set("  Please enter a weight value.")
+            self.err_var.set("Please enter a valid weight.")
             return
         try:
             w_num = float(w_raw)
             if w_num <= 0:
                 raise ValueError
         except ValueError:
-            self.err_var.set("  Weight must be a positive number.")
+            self.err_var.set("Please enter a valid weight.")
             return
 
         # convert
@@ -435,20 +601,275 @@ class BMIApp(tk.Tk):
         w_kg = weight_to_kg(w_num, self.w_unit.get())
 
         if h_m < 0.5 or h_m > 3.0:
-            self.err_var.set("  Height value seems unrealistic. Check unit selection.")
+            self.err_var.set("Height value seems unrealistic. Check unit selection.")
             return
         if w_kg < 2 or w_kg > 700:
-            self.err_var.set("  Weight value seems unrealistic. Check unit selection.")
+            self.err_var.set("Weight value seems unrealistic. Check unit selection.")
             return
 
         bmi = w_kg / (h_m ** 2)
-        label, tip, color = get_bmi_category(bmi)
+        label, tip, color, key = get_bmi_category(bmi)
 
+        # Store calculations for clipboard and pdf utilities
+        self.last_bmi = bmi
+        self.last_category = label
+        self.last_height_str = f"{h_num} {self.h_unit.get()}"
+        self.last_weight_str = f"{w_num} {self.w_unit.get()}"
+        self.last_tips_key = key
+
+        # Enable action buttons
+        self.copy_btn.config(state="normal")
+        self.pdf_btn.config(state="normal")
+
+        # Update dynamic widgets
         self.info_var.set(
             f"Converted  ->  Height: {h_m:.4f} m  |  Weight: {w_kg:.2f} kg"
         )
         self.gauge.update_bmi(bmi, label, color)
         self._highlight_range(bmi)
+        
+        # Display dynamic tips list
+        self.tips_text.set(HEALTH_TIPS.get(key, ""))
+
+        # Save to local history log
+        self._save_to_history(h_num, w_num, bmi, label)
+
+    def _copy_result(self):
+        if self.last_bmi is not None:
+            formatted_text = f"BMI: {self.last_bmi:.1f}\nCategory: {self.last_category}"
+            self.clipboard_clear()
+            self.clipboard_append(formatted_text)
+            self.update()
+            
+            # Temporary label swap for quick UX copy confirmation
+            orig = self.copy_btn.cget("text")
+            self.copy_btn.config(text="  Copied Result! ✓  ", fg=BMI_COLORS["normal"])
+            self.after(1500, lambda: self.copy_btn.config(text=orig, fg=TEXT_PRI))
+
+    def _export_pdf(self):
+        if self.last_bmi is None:
+            return
+
+        name = simpledialog.askstring("Report Owner", "Enter name for the BMI Report:", parent=self)
+        if name is None: # user cancelled
+            return
+        name = name.strip()
+        if not name:
+            name = "Valued User"
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"BMI_Report_{name.replace(' ', '_')}.pdf",
+            title="Save BMI Assessment Report",
+            parent=self
+        )
+        if not filename:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib import colors
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            
+            doc = SimpleDocTemplate(filename, pagesize=letter,
+                                    rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            story = []
+            styles = getSampleStyleSheet()
+            
+            # Styles configuration
+            title_style = ParagraphStyle(
+                'DocTitle',
+                parent=styles['Heading1'],
+                fontName='Helvetica-Bold',
+                fontSize=24,
+                textColor=colors.HexColor("#6c63ff"),
+                spaceAfter=6
+            )
+            subtitle_style = ParagraphStyle(
+                'DocSub',
+                parent=styles['Normal'],
+                fontName='Helvetica',
+                fontSize=10,
+                textColor=colors.HexColor("#8b8fa8"),
+                spaceAfter=25
+            )
+            section_heading = ParagraphStyle(
+                'SectionHeading',
+                parent=styles['Heading2'],
+                fontName='Helvetica-Bold',
+                fontSize=14,
+                textColor=colors.HexColor("#1a1d27"),
+                spaceBefore=15,
+                spaceAfter=8,
+                borderColor=colors.HexColor("#6c63ff"),
+                borderPadding=4
+            )
+            body_style = ParagraphStyle(
+                'DocBody',
+                parent=styles['BodyText'],
+                fontName='Helvetica',
+                fontSize=10,
+                textColor=colors.HexColor("#2a2d3a"),
+                leading=15,
+                spaceAfter=8
+            )
+            bold_label = ParagraphStyle(
+                'BoldLabel',
+                parent=body_style,
+                fontName='Helvetica-Bold'
+            )
+            
+            # PDF Header
+            story.append(Paragraph("BMI ASSESSMENT REPORT", title_style))
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            story.append(Paragraph(f"Generated on {now_str} for {name}", subtitle_style))
+            
+            # Details Summary
+            story.append(Paragraph("Assessment Summary", section_heading))
+            summary_data = [
+                [Paragraph("Patient Name:", bold_label), Paragraph(name, body_style)],
+                [Paragraph("Measured Height:", bold_label), Paragraph(self.last_height_str, body_style)],
+                [Paragraph("Measured Weight:", bold_label), Paragraph(self.last_weight_str, body_style)],
+                [Paragraph("Calculated BMI:", bold_label), Paragraph(f"{self.last_bmi:.1f}", body_style)],
+                [Paragraph("Classification:", bold_label), Paragraph(self.last_category, body_style)]
+            ]
+            t = Table(summary_data, colWidths=[150, 350])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.HexColor("#e2e8f0")),
+                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor("#cbd5e1")),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 15))
+            
+            # PDF Health Advice
+            story.append(Paragraph("Health & Lifestyle Advice", section_heading))
+            tips = HEALTH_TIPS.get(self.last_tips_key, "")
+            for line in tips.split('\n'):
+                if line.strip():
+                    story.append(Paragraph(line.strip(), body_style))
+            story.append(Spacer(1, 15))
+            
+            # Reference ranges table
+            story.append(Paragraph("BMI Category Reference Ranges", section_heading))
+            ref_data = [["BMI Range", "Classification", "General Recommendation"]]
+            for lo, hi, label, tip, color_hex, _ in BMI_RANGES:
+                range_str = f"{lo} - {hi}" if hi < 100 else f"{lo}+"
+                ref_data.append([range_str, label, tip])
+                
+            ref_table = Table(ref_data, colWidths=[100, 150, 250])
+            ref_table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1a1d27")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('LINEBELOW', (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor("#cbd5e1")),
+            ])
+            
+            for i in range(len(ref_data)):
+                for j in range(len(ref_data[i])):
+                    is_header = (i == 0)
+                    font_name = "Helvetica-Bold" if is_header else "Helvetica"
+                    text_color = colors.white if is_header else colors.HexColor("#2a2d3a")
+                    
+                    if not is_header and ref_data[i][1] == self.last_category:
+                        ref_table_style.add('BACKGROUND', (0, i), (-1, i), colors.HexColor("#f1f5f9"))
+                        font_name = "Helvetica-Bold"
+                        
+                    ref_data[i][j] = Paragraph(
+                        ref_data[i][j],
+                        ParagraphStyle('Cell', parent=styles['Normal'], fontName=font_name, textColor=text_color, fontSize=9)
+                    )
+            
+            ref_table.setStyle(ref_table_style)
+            story.append(ref_table)
+            
+            # Disclaimer
+            story.append(Spacer(1, 30))
+            disclaimer_style = ParagraphStyle(
+                'Disclaimer',
+                parent=styles['Normal'],
+                fontName='Helvetica-Oblique',
+                fontSize=8,
+                textColor=colors.HexColor("#8b8fa8"),
+                alignment=1
+            )
+            story.append(Paragraph("Disclaimer: BMI is a general screening tool and not a diagnostic measure of health.", disclaimer_style))
+            story.append(Paragraph("Please consult with a qualified medical professional for personalized health advice.", disclaimer_style))
+            
+            doc.build(story)
+            messagebox.showinfo("Success", f"PDF report successfully exported to:\n{os.path.basename(filename)}", parent=self)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export PDF:\n{str(e)}", parent=self)
+
+    # ── history logger operations ──────────────────────────────────────────────
+    def _load_history(self):
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r") as f:
+                    return json.load(f)
+            except Exception:
+                return []
+        return []
+
+    def _save_history(self, history):
+        try:
+            with open(HISTORY_FILE, "w") as f:
+                json.dump(history, f, indent=4)
+        except Exception as e:
+            print(f"Error saving history log: {e}")
+
+    def _save_to_history(self, h_val, w_val, bmi, label):
+        history = self._load_history()
+        
+        record = {
+            "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "height": f"{h_val} {self.h_unit.get()}",
+            "weight": f"{w_val} {self.w_unit.get()}",
+            "bmi": round(bmi, 1),
+            "category": label
+        }
+        
+        history.insert(0, record)
+        if len(history) > 100:
+            history = history[:100]
+            
+        self._save_history(history)
+        self._refresh_history_table()
+
+    def _refresh_history_table(self):
+        for item in self.history_table.get_children():
+            self.history_table.delete(item)
+            
+        history = self._load_history()
+        for rec in history:
+            self.history_table.insert("", "end", values=(
+                rec.get("date", ""),
+                rec.get("height", ""),
+                rec.get("weight", ""),
+                rec.get("bmi", ""),
+                rec.get("category", "")
+            ))
+
+    def _clear_history(self):
+        if not self._load_history():
+            messagebox.showinfo("History", "No history records to clear.", parent=self)
+            return
+            
+        if messagebox.askyesno("Clear History", "Are you sure you want to permanently clear all history records?", parent=self):
+            self._save_history([])
+            self._refresh_history_table()
 
     def _highlight_range(self, bmi):
         for lo, hi, row_f, indicator, lbl_t, lbl_s, color in self.range_rows:
@@ -477,6 +898,17 @@ class BMIApp(tk.Tk):
         self.err_var.set("")
         self.info_var.set("")
         self.gauge.reset()
+
+        # Reset selection states
+        self.last_bmi = None
+        self.last_category = None
+        self.last_height_str = ""
+        self.last_weight_str = ""
+        self.last_tips_key = ""
+        
+        self.copy_btn.config(state="disabled")
+        self.pdf_btn.config(state="disabled")
+        self.tips_text.set("Enter details and calculate to see health advice.")
 
         for _, _, row_f, indicator, lbl_t, lbl_s, color in self.range_rows:
             row_f.config(bg=CARD)
