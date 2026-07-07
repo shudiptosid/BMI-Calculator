@@ -1,10 +1,12 @@
-﻿# BMI Calculator
+# BMI Calculator
 
 A minimal, dark-themed **Body Mass Index Calculator** built with Python and Tkinter — no third-party dependencies required.
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
+
+![BMI Calculator Preview](./Preview.png)
 
 ---
 
